@@ -5,6 +5,11 @@ fs.mkdirSync(dir,{recursive:true});
 let d={stores:{},orders:[],users:{},team:[],site:{support:'',announce:''},counter:0};
 try{d={...d,...JSON.parse(fs.readFileSync(file,'utf8'))}}catch{}
 let t;const save=()=>{clearTimeout(t);t=setTimeout(()=>fs.writeFile(file,JSON.stringify(d),()=>{}),300)};
+d.site={support:'',announce:'',price:9.99,requirePlan:false,payments:[],...d.site};d.partners??=[];d.subs??={};d.subOrders??=[];
+const DAY=864e5;
+const subInfo=g=>{const u=d.subs[g]?.until||0,on=u>Date.now();return{until:u,active:on,days:on?Math.ceil((u-Date.now())/DAY):0,required:!!d.site.requirePlan,ever:!!u}};
+const subActive=g=>!d.site.requirePlan||subInfo(g).active;
+const addDays=(g,n)=>{const b=Math.max(d.subs[g]?.until||0,Date.now());d.subs[g]={until:b+n*DAY};save();return d.subs[g].until};
 const store=g=>{
   const s=d.stores[g]||(d.stores[g]={},save(),d.stores[g]);
   s.products??=[];
@@ -18,4 +23,4 @@ const store=g=>{
   return s};
 const nextInvoice=()=>{d.counter=(d.counter||0)+1;save();return 'ORB-'+String(d.counter).padStart(6,'0')};
 const user=id=>{if(!d.users[id]){d.users[id]=Date.now();save()}};
-module.exports={d,save,store,user,nextInvoice};
+module.exports={d,save,store,user,nextInvoice,subInfo,subActive,addDays};

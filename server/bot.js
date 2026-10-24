@@ -46,7 +46,7 @@ c.on('interactionCreate',async i=>{try{
     await i.channel.send(panel(i.guildId));return i.reply({content:'تم النشر ✅',ephemeral:true});
   }
   if(i.isButton()&&i.customId==='o_open'){
-    if(!st||st.suspended)return i.reply({content:'المتجر غير متاح حالياً.',ephemeral:true});
+    if(!st||st.suspended||!db.subActive(i.guildId))return i.reply({content:'المتجر متوقف مؤقتاً.',ephemeral:true});
     if(!st.products.length)return i.reply({content:'لا توجد منتجات حالياً.',ephemeral:true});
     return i.reply({ephemeral:true,content:'اختر المنتج:',components:[row(new StringSelectMenuBuilder().setCustomId('o_pick').setPlaceholder('اختر منتجاً')
       .addOptions(st.products.slice(0,25).map(p=>({label:p.name.slice(0,90)+(avail(st,p)?'':' (نفد)'),description:p.price+' ر.س',value:p.id}))))]});
@@ -60,7 +60,7 @@ c.on('interactionCreate',async i=>{try{
     return i.update({content:'',embeds:[e],files:f,components:[row(new ButtonBuilder().setCustomId('o_buy:'+p.id).setLabel(ok?'شراء الآن':'نفدت الكمية').setStyle(ok?ButtonStyle.Success:ButtonStyle.Secondary).setDisabled(!ok))]});
   }
   if(i.isButton()&&i.customId.startsWith('o_buy:')){
-    if(!st||st.suspended)return i.reply({content:'المتجر غير متاح حالياً.',ephemeral:true});
+    if(!st||st.suspended||!db.subActive(i.guildId))return i.reply({content:'المتجر متوقف مؤقتاً.',ephemeral:true});
     const p=st.products.find(x=>x.id===i.customId.slice(6));if(!p)return i.reply({content:'المنتج غير متوفر',ephemeral:true});
     if(!avail(st,p))return i.reply({content:'عذراً، نفدت الكمية.',ephemeral:true});
     if(st.reviews.required){const un=db.d.orders.find(o=>o.gid===i.guildId&&o.buyer.id===i.user.id&&o.status==='delivered'&&!o.rated);

@@ -18,3 +18,13 @@ function nav(){
 }
 document.addEventListener('click',()=>$('#menu')?.classList.remove('on'));
 
+
+/* ---- أدوات مشتركة v4 ---- */
+const PM={pending:'تم استلام الإيصال، بانتظار قبول التاجر ⏳',accepted:'✅ تم قبول طلبك، بانتظار تسليم المنتج',delivered:'🎉 تم تسليم المنتج! تفقد رسائلك الخاصة',rejected:'❌ تم رفض الطلب، تواصل مع التاجر'};
+function live(fn,ms=1000){clearInterval(window.__live);let busy=0;window.__live=setInterval(async()=>{if(busy)return;busy=1;try{await fn()}catch(e){}busy=0},ms)}
+const lockPage=m=>{clearInterval(window.__live);app.innerHTML=`<div class="card st lock"><div class="big">🔒</div><h2 style="margin:14px 0">${esc(m)}</h2><p class="mut" style="margin-bottom:24px">جدّد اشتراكك في باقة Orbit لتعود لوحة التحكم وكل الخدمات للعمل فوراً.</p><a class="btn lg" href="#/plan">تجديد الاشتراك</a></div>`};
+const cp=(l,v)=>v?`<label>${l}</label><div class="code" data-c="${esc(v)}">${esc(v)}</div>`:'';
+const methodCard=m=>`<div class="card st" style="margin-bottom:12px"><h3>${esc(m.name)}</h3>${cp('البنك',m.bank)}${cp('اسم المستفيد',m.beneficiary)}${cp('الآيبان',m.iban)}${m.accountOn?cp('رقم الحساب',m.account):''}${m.phoneOn?cp('رقم الجوال',m.phone):''}${m.linkOn&&m.link?`<br><a class="btn sm" target="_blank" rel="noopener" href="${esc(m.link)}">فتح رابط الدفع</a>`:''}${m.qr?`<div class="c"><br><img class="qr" src="${esc(m.qr)}"></div>`:''}</div>`;
+const bindCopy=r=>r.querySelectorAll('[data-c]').forEach(e=>e.onclick=()=>{navigator.clipboard?.writeText(e.dataset.c);toast('تم النسخ')});
+const avt=m=>m.avatarUrl?`<img src="${esc(m.avatarUrl)}" alt="">`:`<div class="sg big">${esc((m.username||'?')[0])}</div>`;
+const fmtD=t=>new Date(t).toLocaleDateString('ar-SA',{year:'numeric',month:'long',day:'numeric'});

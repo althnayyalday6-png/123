@@ -1,14 +1,24 @@
 /* ---------- لوحة التاجر ---------- */
-const dash=guard(async gid=>{if(!ME)return need();let tab='ov',D=await api('/stores/'+gid);const reload=async()=>{D=await api('/stores/'+gid);draw()};
-  const draw=()=>{const O=D.orders,pend=O.filter(o=>o.status==='pending').length;
-    const T=[['ov','📊','نظرة عامة'],['p','📦','المنتجات'],['o','🧾','الطلبات',pend],['t','🎫','التكت'],['pm','💳','بيانات الدفع'],['st','🏬','المخزن'],['rv','⭐','التقييمات'],['iv','🧾','الفواتير']];
-    app.innerHTML=`<div class="dl"><aside class="side"><div class="gn"><img src="img/logo.png" width="36"><b>لوحة التاجر</b></div>${T.map(t=>`<button data-t="${t[0]}" class="${tab===t[0]?'on':''}"><span>${t[1]}</span>${t[2]}${t[3]?`<span class="cnt">${t[3]}</span>`:''}</button>`).join('')}<button onclick="location.hash='#/stores'"><span>🔁</span>تغيير السيرفر</button></aside><section id="tb"></section></div>`;
-    app.querySelectorAll('.side [data-t]').forEach(b=>b.onclick=()=>{tab=b.dataset.t;draw()});
+const dash=guard(async gid=>{if(!ME)return need();let tab='ov',D;
+  try{D=await api('/stores/'+gid)}catch(e){if(e.sub)return lockPage(e.message);throw e}
+  let sig=(await api(`/stores/${gid}/sync`)).sig;const reload=async()=>{D=await api('/stores/'+gid);draw()};
+  const draw=()=>{const O=D.orders,pend=O.filter(o=>o.status==='pending').length,sb=D.sub;
+    const T=[['g','','الرئيسية'],['ov','📊','نظرة عامة'],['o','🛎️','الطلبات',pend],['p','📦','المنتجات'],['g','','الواجهة'],['t','🎫','التكت'],['st','🏬','المخزن'],['g','','المالية'],['pm','💳','بيانات الدفع'],['iv','🧾','الفواتير'],['g','','التفاعل'],['rv','⭐','التقييمات']];
+    const chip=!sb.required?'<div class="subc fr"><b>الباقة</b>التشغيل مجاني حالياً</div>':sb.active?`<div class="subc ${sb.days<=3?'bad':'ok'}"><b>باقة Orbit نشطة</b>متبقي ${sb.days} يوم • تنتهي ${fmtD(sb.until)}</div>`:'<div class="subc bad"><b>الاشتراك منتهي</b>يرجى التجديد</div>';
+    app.innerHTML=`<div class="dl"><aside class="side"><div class="gn"><img src="img/logo.png" width="44"><div><b>لوحة التاجر</b><small>${esc(D.name)}</small></div></div>${chip}${T.map(t=>t[0]==='g'?`<div class="grp">${t[2]}</div>`:`<button data-t="${t[0]}" class="${tab===t[0]?'on':''}"><span>${t[1]}</span>${t[2]}${t[3]?`<span class="cnt">${t[3]}</span>`:''}</button>`).join('')}<div class="grp">الحساب</div><button onclick="location.hash='#/plan'"><span>💎</span>الباقة والتجديد</button><button onclick="location.hash='#/stores'"><span>🔁</span>تغيير السيرفر</button><div class="ufoot"><img src="${esc(ME.avatarUrl)}"><div><b>${esc(ME.username)}</b><small>تاجر</small></div></div></aside><section id="tb"></section></div>`;
+    app.querySelectorAll('.side [data-t]').forEach(b=>b.onclick=()=>{tab=b.dataset.t;draw();scrollTo(0,0)});
     const tb=$('#tb'),head=(t,x='')=>`<div class="dh"><h2>${t}</h2>${x}</div>`;
-    if(tab==='ov'){const ok=O.filter(o=>['accepted','delivered'].includes(o.status)),rev=ok.reduce((a,o)=>a+o.product.price,0);
-      const chk=[[D.products.length,'أضف منتجاً واحداً على الأقل','p'],[D.payments.length,'أضف طريقة دفع','pm'],[0,'انشر لوحة الشراء في روم من قسم «التكت»','t']];
-      tb.innerHTML=head('نظرة عامة')+`<div class="grid">${[['المنتجات',D.products.length],['طلبات بانتظار القبول',pend],['مبيعات مقبولة',ok.length],['الإيرادات (ر.س)',rev]].map(x=>`<div class="card c st"><div class="stat">${x[1]}</div><p class="mut">${x[0]}</p></div>`).join('')}</div>
-      <div class="card st" style="margin-top:20px"><h3>خطوات البدء</h3><br>${chk.map(c=>`<p style="margin:8px 0">${c[0]?'✅':'⬜'} <a href="#" data-g="${c[2]}" style="color:var(--o1);text-decoration:none">${c[1]}</a></p>`).join('')}</div>`;
+    if(tab==='ov'){const ok=O.filter(o=>['accepted','delivered'].includes(o.status)),rev=ok.reduce((a,o)=>a+o.product.price,0),L=D.reviews.list,avg=L.length?(L.reduce((a,r)=>a+r.stars,0)/L.length).toFixed(1):'—';
+      const days=[...Array(7)].map((_,i)=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-(6-i));const a=d.getTime(),v=ok.filter(o=>o.created>=a&&o.created<a+864e5);return{l:d.toLocaleDateString('ar-SA',{weekday:'short'}),n:v.length,r:v.reduce((x,o)=>x+o.product.price,0)}}),mx=Math.max(1,...days.map(x=>x.r));
+      const top=Object.values(ok.reduce((m,o)=>{(m[o.product.name]??={n:o.product.name,c:0}).c++;return m},{})).sort((a,b)=>b.c-a.c).slice(0,5),tm=Math.max(1,...top.map(x=>x.c));
+      const low=D.stock.items.filter(i=>i.qty<=D.stock.lowAt),chk=[[D.products.length,'أضف منتجاً واحداً على الأقل','p'],[D.payments.length,'أضف طريقة دفع','pm'],[0,'انشر لوحة الشراء في روم من قسم «التكت»','t']].filter(c=>!c[0]);
+      tb.innerHTML=head(`مرحباً ${esc(ME.username)} 👋`,'<span class="live">تحديث تلقائي كل ثانية</span>')+
+      `<div class="kpis">${[['💰',rev,'الإيرادات (ر.س)',''],['🛒',ok.length,'مبيعات مقبولة',''],['⏳',pend,'بانتظار القبول',pend?'hot':''],['⭐',avg,'متوسط التقييم','']].map(x=>`<div class="card st kpi ${x[3]}"><div class="ki">${x[0]}</div><div><div class="stat">${x[1]}</div><p class="mut">${x[2]}</p></div></div>`).join('')}</div>
+      <div class="two"><div class="card st"><h3>المبيعات — آخر 7 أيام</h3><div class="bars">${days.map(x=>`<div class="bar"><b>${x.r||''}</b><i class="${x.r?'':'z'}" style="height:${Math.max(4,x.r/mx*100)}%"></i><small>${x.l}</small></div>`).join('')}</div></div>
+      <div class="card st"><div class="row sp"><h3>آخر الطلبات</h3><a href="#" data-g="o" style="color:var(--o1);text-decoration:none;font-size:14px">عرض الكل</a></div><div class="lst">${O.slice(0,6).map(o=>`<div><span>${esc(o.product.name)}<small class="mut"> • ${esc(o.buyer.name)}</small></span><span class="badge b-${o.status}">${ST[o.status]}</span></div>`).join('')||'<p class="mut">لا توجد طلبات بعد.</p>'}</div></div></div>
+      <div class="two" style="grid-template-columns:1fr 1fr"><div class="card st"><h3>الأكثر مبيعاً</h3>${top.map(x=>`<div style="margin-top:14px"><div class="row sp"><span>${esc(x.n)}</span><b>${x.c}</b></div><div class="meter"><i style="width:${x.c/tm*100}%"></i></div></div>`).join('')||'<p class="mut" style="margin-top:10px">ستظهر هنا بعد أول عملية بيع.</p>'}</div>
+      <div class="card st"><h3>تنبيهات المخزن</h3><div class="lst">${low.map(i=>`<div><span>${esc(i.emoji)} ${esc(i.name)}</span><span class="badge ${i.qty<=0?'b-rejected':'b-pending'}">${i.qty<=0?'نفد':'متبقي '+i.qty}</span></div>`).join('')||'<p class="mut">المخزون بحالة ممتازة ✅</p>'}</div></div></div>
+      ${chk.length?`<div class="card st" style="margin-top:22px"><h3>خطوات البدء</h3>${chk.map(c=>`<p style="margin:12px 0">⬜ <a href="#" data-g="${c[2]}" style="color:var(--o1);text-decoration:none">${c[1]}</a></p>`).join('')}</div>`:''}`;
       tb.querySelectorAll('[data-g]').forEach(a=>a.onclick=e=>{e.preventDefault();tab=a.dataset.g;draw()})}
     if(tab==='p'){tb.innerHTML=head('إدارة المنتجات','<button class="btn" id="add">+ إضافة منتج</button>')+`<div class="pg">${D.products.map(p=>`<div class="card">${p.image?`<img class="pi" src="${esc(p.image)}">`:'<div class="ph">📦</div>'}<h3>${esc(p.name)}</h3><p class="mut">${esc(p.desc)}</p><div class="price">${p.price} ر.س</div><div class="row"><button class="btn sm ghost" data-e="${p.id}">تعديل</button><button class="btn sm red" data-d="${p.id}">حذف</button></div></div>`).join('')||'<p class="mut">لا توجد منتجات بعد.</p>'}</div>`;
       $('#add').onclick=()=>pform();tb.querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>pform(D.products.find(p=>p.id===b.dataset.e)));
@@ -54,5 +64,9 @@ const dash=guard(async gid=>{if(!ME)return need();let tab='ov',D=await api('/sto
     ['ao','po','lo'].forEach(i=>$('#'+i).onchange=sync);sync();
     m.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{$('#mn').value=c.textContent;if(c.textContent==='STC Pay'||c.textContent==='UR Pay'){$('#po').checked=true}if(c.textContent==='رابط دفع'){$('#lo').checked=true}sync()});
     $('#mok').onclick=guard(async()=>{const qr=await readImg($('#mq').files[0]);await api(`/stores/${gid}/payments`,{method:'POST',body:{id:p.id,active:p.active!==false,name:$('#mn').value,bank:$('#mb').value,beneficiary:$('#mbn').value,iban:$('#mi').value,account:$('#ma').value,accountOn:$('#ao').checked,phone:$('#mp').value,phoneOn:$('#po').checked,link:$('#ml').value,linkOn:$('#lo').checked,qr,clearQr:!!$('#cq')?.checked}});m.remove();toast('تم الحفظ ✅');reload()})}
-  draw()});
-
+  draw();
+  live(async()=>{let r;try{r=await api(`/stores/${gid}/sync`)}catch(e){if(e.sub)lockPage(e.message);return}
+    if(r.sig===sig)return;sig=r.sig;const before=D.orders.filter(o=>o.status==='pending').length;D=await api('/stores/'+gid);
+    if(D.orders.filter(o=>o.status==='pending').length>before)toast('🔔 طلب جديد بانتظار القبول');
+    const f=document.activeElement;if(['t','pm'].includes(tab)||document.querySelector('.modal')||(f&&f.closest&&f.closest('#tb')&&/INPUT|TEXTAREA|SELECT/.test(f.tagName)))return;
+    const y=scrollY;draw();scrollTo(0,y)})});

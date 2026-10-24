@@ -6,7 +6,7 @@ const app=express();app.set('trust proxy',1);
 app.use(express.json({limit:'8mb'}));
 app.use(session({secret:E.SESSION_SECRET||'change-me',resave:false,saveUninitialized:false,cookie:{maxAge:6048e5,sameSite:'lax',secure:'auto'}}));
 const fail=(m,c=400)=>{const e=new Error(m);e.code=c;throw e};
-const wrap=f=>(q,s)=>Promise.resolve().then(()=>f(q,s)).catch(e=>s.status(e.code||500).json({error:e.message}));
+const wrap=f=>(q,s)=>Promise.resolve().then(()=>f(q,s)).catch(e=>s.status(e.code||500).json({error:e.message,sub:e.sub}));
 const me=q=>q.session.user||fail('سجّل دخولك أولاً',401);
 const isAdmin=g=>g.owner||(BigInt(g.permissions)&8n);
 const S=(v,n)=>String(v??'').slice(0,n);
@@ -30,22 +30,23 @@ app.get('/auth/callback',wrap(async(q,s)=>{
   q.session.user={id:u.id,username:u.global_name||u.username,
     avatarUrl:u.avatar?`https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=128`:'https://cdn.discordapp.com/embed/avatars/0.png',
     guilds:(Array.isArray(g)?g:[]).filter(isAdmin).map(x=>({id:x.id,name:x.name,icon:x.icon}))};
-  db.user(u.id);const tm=db.d.team.find(x=>x.id===u.id);if(tm){tm.username=q.session.user.username;tm.avatarUrl=q.session.user.avatarUrl;db.save()}
+  db.user(u.id);
   const n=q.session.next||'';s.redirect('/'+(n.startsWith('#')?n:'#/stores'));
 }));
 app.post('/auth/logout',(q,s)=>q.session.destroy(()=>s.json({ok:1})));
 
 // ---------- عام ----------
-app.get('/api/config',(q,s)=>s.json({clientId:E.CLIENT_ID,support:db.d.site.support||E.SUPPORT_URL||'',announce:db.d.site.announce||''}));
+app.get('/api/config',(q,s)=>s.json({clientId:E.CLIENT_ID,support:db.d.site.support||E.SUPPORT_URL||'',announce:db.d.site.announce||'',price:db.d.site.price}));
 app.get('/api/team',(q,s)=>s.json(db.d.team));
 app.get('/api/me',(q,s)=>{const u=q.session.user;s.json(u?{id:u.id,username:u.username,avatarUrl:u.avatarUrl,isOwner:u.id===E.OWNER_ID}:null)});
 app.get('/api/guilds',wrap((q,s)=>s.json(me(q).guilds.map(g=>({...g,botIn:bot.has(g.id),active:!!db.d.stores[g.id],suspended:!!db.d.stores[g.id]?.suspended,invite:bot.invite(g.id)})))));
 
 // ---------- المتجر ----------
 const own=q=>{const u=me(q),g=q.params.gid;if(!u.guilds.some(x=>x.id===g)&&u.id!==E.OWNER_ID)fail('لا تملك صلاحية على هذا السيرفر',403);
-  if(!bot.has(g))fail('البوت غير موجود في السيرفر',409);const st=db.store(g);if(st.suspended&&u.id!==E.OWNER_ID)fail('تم إيقاف هذا المتجر من إدارة المنصة',403);return st};
+  if(!bot.has(g))fail('البوت غير موجود في السيرفر',409);const st=db.store(g);if(st.suspended&&u.id!==E.OWNER_ID)fail('تم إيقاف هذا المتجر من إدارة المنصة',403);
+  if(!db.subActive(g)&&u.id!==E.OWNER_ID){const x=new Error(db.d.subs[g]?'انتهى الاشتراك، يرجى التجديد':'هذا المتجر يحتاج اشتراكاً في باقة Orbit');x.code=402;x.sub=true;throw x}return st};
 const G='/api/stores/:gid';
-app.get(G,wrap((q,s)=>{const st=own(q);s.json({...st,roles:bot.roles(q.params.gid),channels:bot.channels(q.params.gid),orders:db.d.orders.filter(o=>o.gid===q.params.gid).reverse(),maxStock:MAX_STOCK})}));
+app.get(G,wrap((q,s)=>{const st=own(q);s.json({...st,name:bot.guildName(q.params.gid),sub:db.subInfo(q.params.gid),roles:bot.roles(q.params.gid),channels:bot.channels(q.params.gid),orders:db.d.orders.filter(o=>o.gid===q.params.gid).reverse(),maxStock:MAX_STOCK})}));
 
 app.put(G+'/ticket',wrap((q,s)=>{const st=own(q),b=q.body,t=st.ticket;
   t.title=S(b.title,100);t.desc=S(b.desc,1500);t.btnLabel=S(b.btnLabel,40);t.btnEmoji=S(b.btnEmoji,60);
@@ -130,15 +131,60 @@ app.get('/api/invoice/:code',wrap((q,s)=>{const o=db.d.orders.find(x=>x.invoice?
 // ---------- إدارة المنصة (المالك) ----------
 app.get('/api/admin/overview',wrap((q,s)=>{isOwner(q);const O=db.d.orders,ok=x=>['accepted','delivered'].includes(x.status);
   const stores=Object.keys(db.d.stores).map(g=>{const st=db.store(g),mine=O.filter(o=>o.gid===g);
-    return{id:g,name:bot.guildName(g),botIn:bot.has(g),suspended:!!st.suspended,products:st.products.length,orders:mine.length,sales:mine.filter(ok).length,revenue:mine.filter(ok).reduce((a,o)=>a+o.product.price,0),reviews:st.reviews.list.length}});
-  s.json({stats:{servers:bot.count(),stores:stores.length,users:Object.keys(db.d.users).length,orders:O.length,pending:O.filter(o=>o.status==='pending').length,accepted:O.filter(ok).length,delivered:O.filter(o=>o.status==='delivered').length,revenue:O.filter(ok).reduce((a,o)=>a+o.product.price,0),invoices:db.d.counter||0},
+    return{id:g,name:bot.guildName(g),botIn:bot.has(g),suspended:!!st.suspended,products:st.products.length,orders:mine.length,sales:mine.filter(ok).length,revenue:mine.filter(ok).reduce((a,o)=>a+o.product.price,0),reviews:st.reviews.list.length,sub:db.subInfo(g)}});
+  s.json({stats:{servers:bot.count(),stores:stores.length,users:Object.keys(db.d.users).length,orders:O.length,pending:O.filter(o=>o.status==='pending').length,accepted:O.filter(ok).length,delivered:O.filter(o=>o.status==='delivered').length,revenue:O.filter(ok).reduce((a,o)=>a+o.product.price,0),invoices:db.d.counter||0,activeSubs:Object.keys(db.d.subs).filter(g=>db.subInfo(g).active).length,pendingSubs:db.d.subOrders.filter(o=>o.status==='pending').length},
     stores,orders:O.slice(-40).reverse().map(o=>({id:o.id,store:bot.guildName(o.gid),product:o.product.name,price:o.product.price,buyer:o.buyer.name,status:o.status,created:o.created,invoice:o.invoice?.no||''})),site:db.d.site}) }));
 app.put('/api/admin/store/:gid',wrap((q,s)=>{isOwner(q);const st=db.d.stores[q.params.gid]||fail('غير موجود',404);st.suspended=!!q.body.suspended;db.save();s.json({ok:1})}));
-app.put('/api/admin/site',wrap((q,s)=>{isOwner(q);const u=S(q.body.support,200);if(u&&!/^https?:\/\//.test(u))fail('الرابط يجب أن يبدأ بـ https://');
-  db.d.site.support=u;db.d.site.announce=S(q.body.announce,200);db.save();s.json({ok:1})}));
-app.post('/api/admin/team',wrap(async(q,s)=>{isOwner(q);const title=S(q.body.title,40)||'عضو الطاقم';
-  const m=q.body.id?await bot.fetchUser(String(q.body.id).trim()).catch(()=>fail('تعذّر جلب الحساب، تأكد من الآيدي')):(({id,username,avatarUrl})=>({id,username,avatarUrl}))(q.session.user);
-  const r={...m,title};upsert(db.d.team,r);db.save();s.json(r)}));
+// ===== v4: التحديث اللحظي + الباقة + الشركاء + الطاقم الثابت =====
+app.get(G+'/sync',wrap((q,s)=>{const st=own(q),g=q.params.gid;
+  const x=[db.d.orders.filter(o=>o.gid===g).map(o=>o.id+o.status+(o.rated?1:0)).join(),st.stock.items.map(i=>i.id+i.qty).join(),st.reviews.list.length,st.products.length,st.payments.length,db.subInfo(g).until].join('|');
+  s.json({sig:crypto.createHash('md5').update(x).digest('hex')})}));
+app.get('/api/order/:id/status',wrap((q,s)=>{const u=me(q),o=orderOf(q,q.params.id);if(o.buyer.id!==u.id)fail('غير متاح',404);s.json({status:o.status})}));
+
+const cleanMethod=(b,old)=>{const link=S(b.link,300);if(!S(b.name,40))fail('أدخل اسم طريقة الدفع');if(b.linkOn&&!/^https?:\/\//.test(link))fail('رابط الدفع يجب أن يبدأ بـ https://');
+  return{id:b.id||crypto.randomBytes(4).toString('hex'),name:S(b.name,40),bank:S(b.bank,40),beneficiary:S(b.beneficiary,60),iban:S(b.iban,40),account:S(b.account,40),accountOn:!!b.accountOn,
+    phone:S(b.phone,20),phoneOn:!!b.phoneOn,link,linkOn:!!b.linkOn,active:b.active!==false,qr:img(b.qr)||(old&&!b.clearQr?old.qr:'')}};
+
+// الباقة
+app.get('/api/plan',(q,s)=>s.json({price:db.d.site.price,methods:db.d.site.payments.filter(m=>m.active),required:db.d.site.requirePlan}));
+app.get('/api/sub/mine',wrap((q,s)=>{const u=me(q);
+  s.json({orders:db.d.subOrders.filter(o=>o.user.id===u.id).map(({receipt,...r})=>r).reverse(),
+    guilds:u.guilds.filter(g=>bot.has(g.id)).map(g=>({gid:g.id,name:g.name,...db.subInfo(g.id)}))})}));
+app.post('/api/sub/order',wrap((q,s)=>{const u=me(q),{gid,payer,method,receipt}=q.body,g=u.guilds.find(x=>x.id===gid);
+  if(!g)fail('اختر سيرفراً تديره');if(!bot.has(gid))fail('أضف البوت للسيرفر أولاً',409);if(!payer||!receipt)fail('أدخل اسم المحوِّل وأرفق الإيصال');
+  if(db.d.subOrders.some(o=>o.gid===gid&&o.user.id===u.id&&o.status==='pending'))fail('لديك طلب اشتراك قيد المراجعة لهذا السيرفر');
+  db.d.subOrders.push({id:crypto.randomBytes(5).toString('hex'),gid,gname:g.name,user:{id:u.id,name:u.username},payer:S(payer,60),method:S(method,40),receipt:img(receipt),price:db.d.site.price,status:'pending',created:Date.now()});
+  db.save();s.json({ok:1})}));
+app.get('/api/admin/subs',wrap((q,s)=>{isOwner(q);s.json({orders:[...db.d.subOrders].reverse(),subs:Object.keys(db.d.subs).map(g=>({gid:g,name:bot.guildName(g),...db.subInfo(g)})),payments:db.d.site.payments,price:db.d.site.price})}));
+app.post('/api/admin/subs/:id/:act',wrap((q,s)=>{isOwner(q);const o=db.d.subOrders.find(x=>x.id===q.params.id)||fail('غير موجود',404);if(o.status!=='pending')fail('تمت معالجته مسبقاً');
+  if(q.params.act==='accept'){o.status='accepted';o.until=db.addDays(o.gid,30);
+    bot.dm(o.user.id,{content:`✅ تم تفعيل اشتراك Orbit لسيرفر **${o.gname}** لمدة 30 يوماً، وينتهي في ${new Date(o.until).toLocaleDateString('ar-SA')}.`}).catch(()=>{})}
+  else if(q.params.act==='reject')o.status='rejected';else fail('إجراء غير معروف');db.save();s.json({ok:1})}));
+app.post('/api/admin/grant',wrap((q,s)=>{isOwner(q);const g=S(q.body.gid,30);if(!db.d.stores[g])fail('متجر غير موجود',404);
+  if(q.body.stop){db.d.subs[g]={until:0};db.save()}else db.addDays(g,Math.min(366,Math.max(1,parseInt(q.body.days)||30)));s.json({ok:1})}));
+app.post('/api/admin/payments',wrap((q,s)=>{isOwner(q);const P=db.d.site.payments,m=cleanMethod(q.body,P.find(x=>x.id===q.body.id));upsert(P,m);db.save();s.json(m)}));
+app.delete('/api/admin/payments/:id',wrap((q,s)=>{isOwner(q);db.d.site.payments=db.d.site.payments.filter(x=>x.id!==q.params.id);db.save();s.json({ok:1})}));
+app.put('/api/admin/site',wrap((q,s)=>{isOwner(q);const u=S(q.body.support,200),st=db.d.site;if(u&&!/^https?:\/\//.test(u))fail('الرابط يجب أن يبدأ بـ https://');
+  st.support=u;st.announce=S(q.body.announce,200);if(+q.body.price>0)st.price=+(+q.body.price).toFixed(2);st.requirePlan=!!q.body.requirePlan;db.save();s.json({ok:1})}));
+app.get('/api/admin/sync',wrap((q,s)=>{isOwner(q);s.json({sig:[db.d.subOrders.map(o=>o.id+o.status).join(),db.d.orders.length,Object.keys(db.d.stores).length,db.d.partners.length].join('|')})}));
+
+// شركاء النجاح (يُجلب عدد الأعضاء من رابط الدعوة)
+const inviteCode=u=>{const m=/(?:discord\.gg|discord(?:app)?\.com\/invite)\/([\w-]{2,32})/i.exec(String(u));return m&&m[1]};
+const fetchInvite=async c=>{const r=await fetch('https://discord.com/api/v10/invites/'+c+'?with_counts=true');if(!r.ok)fail('رابط الدعوة غير صالح أو منتهي');const j=await r.json();if(!j.guild)fail('الدعوة ليست لسيرفر');
+  return{gid:j.guild.id,name:j.guild.name,icon:j.guild.icon?`https://cdn.discordapp.com/icons/${j.guild.id}/${j.guild.icon}.png?size=128`:'',desc:S(j.guild.description,160),members:j.approximate_member_count||0,online:j.approximate_presence_count||0,at:Date.now()}};
+app.get('/api/partners',wrap(async(q,s)=>{const P=db.d.partners,old=P.filter(p=>Date.now()-p.at>9e5);
+  await Promise.allSettled(old.map(async p=>Object.assign(p,await fetchInvite(p.code))));if(old.length)db.save();s.json(P)}));
+app.post('/api/admin/partners',wrap(async(q,s)=>{isOwner(q);const c=inviteCode(q.body.url)||fail('ضع رابط دعوة صحيح (discord.gg/...)');
+  const p={id:crypto.randomBytes(4).toString('hex'),code:c,url:'https://discord.gg/'+c,owner:S(q.body.owner,60),...await fetchInvite(c)};
+  const i=db.d.partners.findIndex(x=>x.gid===p.gid);if(i<0)db.d.partners.push(p);else db.d.partners[i]={...p,id:db.d.partners[i].id};db.save();s.json(p)}));
+app.post('/api/admin/partners/:id/refresh',wrap(async(q,s)=>{isOwner(q);const p=db.d.partners.find(x=>x.id===q.params.id)||fail('غير موجود',404);Object.assign(p,await fetchInvite(p.code));db.save();s.json(p)}));
+app.delete('/api/admin/partners/:id',wrap((q,s)=>{isOwner(q);db.d.partners=db.d.partners.filter(x=>x.id!==q.params.id);db.save();s.json({ok:1})}));
+
+// طاقم العمل: ثابت (يُدخل يدوياً ولا يتغير تلقائياً)
+app.post('/api/admin/team',wrap(async(q,s)=>{isOwner(q);const b=q.body,old=db.d.team.find(x=>x.id===b.id);let username=S(b.username,40),avatarUrl=b.avatar?img(b.avatar):'';
+  if(b.discordId&&!avatarUrl){const u=await bot.fetchUser(String(b.discordId).trim()).catch(()=>fail('تعذّر جلب الحساب، تأكد من الآيدي'));avatarUrl=u.avatarUrl;username=username||u.username}
+  if(!username)fail('أدخل اليوزر');const r={id:old?.id||crypto.randomBytes(4).toString('hex'),username,title:S(b.title,40)||'عضو الطاقم',avatarUrl:avatarUrl||old?.avatarUrl||''};
+  upsert(db.d.team,r);db.save();s.json(r)}));
 app.delete('/api/admin/team/:id',wrap((q,s)=>{isOwner(q);db.d.team=db.d.team.filter(x=>x.id!==q.params.id);db.save();s.json({ok:1})}));
 
 app.use(express.static(path.join(__dirname,'..','public')));
